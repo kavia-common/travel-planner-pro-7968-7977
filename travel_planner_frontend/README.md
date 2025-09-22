@@ -1,82 +1,39 @@
-# Lightweight React Template for KAVIA
+# Travel Planner Frontend (React)
 
-This project provides a minimal React template with a clean, modern UI and minimal dependencies.
+A modern, Ocean Professional themed travel planner that provides:
+- Navigation bar
+- Split view: itinerary and attractions on the left; interactive OpenStreetMap on the right
+- Discover attractions via Overpass API (free)
+- Build/edit itinerary; click map to add custom waypoints
+- Route planning via OSRM public demo server for walking/cycling/driving
+- Modals for details and add-to-itinerary
+- No authentication required
 
-## Features
+## Run
 
-- **Lightweight**: No heavy UI frameworks - uses only vanilla CSS and React
-- **Modern UI**: Clean, responsive design with KAVIA brand styling
-- **Fast**: Minimal dependencies for quick loading times
-- **Simple**: Easy to understand and modify
+- npm install
+- npm start
 
-## Getting Started
+App runs at http://localhost:3000
 
-In the project directory, you can run:
+## APIs used (free/open-source)
 
-### `npm start`
+- Map tiles: OpenStreetMap standard tiles
+- POIs/Attractions: Overpass API (https://overpass-api.de/)
+- Routing: OSRM public demo server (https://router.project-osrm.org)
 
-Runs the app in development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Notes:
+- Public demo servers are rate-limited and for light usage/testing. For heavy usage, self-host Overpass/OSRM or use another free-tier service.
+- No API keys or environment variables are required.
 
-### `npm test`
+## Usage
 
-Launches the test runner in interactive watch mode.
+- Use "Discover nearby" or Search to load attractions near the current map center.
+- Click on the map to add a custom point to your itinerary.
+- Change the travel mode (Walking/Cycling/Driving) to recalculate the route.
+- Open details to see OSM tags and add to itinerary via modal.
 
-### `npm run build`
+## Styling
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+The interface follows the Ocean Professional theme with blue and amber accents and a modern, minimalist style. Styles are defined in src/index.css.
 
-## Customization
-
-### Colors
-
-The main brand colors are defined as CSS variables in `src/App.css`:
-
-```css
-:root {
-  --kavia-orange: #E87A41;
-  --kavia-dark: #1A1A1A;
-  --text-color: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.7);
-  --border-color: rgba(255, 255, 255, 0.1);
-}
-```
-
-### Components
-
-This template uses pure HTML/CSS components instead of a UI framework. You can find component styles in `src/App.css`. 
-
-Common components include:
-- Buttons (`.btn`, `.btn-large`)
-- Container (`.container`)
-- Navigation (`.navbar`)
-- Typography (`.title`, `.subtitle`, `.description`)
-
-## Learn More
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
