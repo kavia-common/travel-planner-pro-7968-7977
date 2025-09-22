@@ -15,6 +15,7 @@ export default function AuthGate({ children }) {
     setHydrated(true);
   }, []);
 
+  // While localStorage hydration check is running, render a minimal loader to avoid flashing the app
   if (!hydrated) {
     return (
       <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
@@ -23,12 +24,13 @@ export default function AuthGate({ children }) {
     );
   }
 
+  // If not authenticated, show login or signup and prevent rendering of children
   if (!session) {
     return view === "signup" ? (
       <Signup
         goToLogin={() => setView("login")}
         onSuccess={() => {
-          // stay on signup and let user proceed to login; session is set on login
+          // After successful signup, prompt user to log in
         }}
       />
     ) : (
@@ -39,9 +41,9 @@ export default function AuthGate({ children }) {
     );
   }
 
+  // Authenticated: render children and a subtle user status/logout chip
   return (
     <>
-      {/* Inject a small user chip and logout into the UI via a portal-like header if children doesn't own it */}
       <div style={{ position: "fixed", top: 10, right: 10, zIndex: 1001 }}>
         <div className="row">
           <span className="badge" title={session.email}>
@@ -63,50 +65,3 @@ export default function AuthGate({ children }) {
     </>
   );
 }
-```
-
-Explanation: Integrate AuthGate into the root so the main App (planner) is hidden until authentication is complete. Also, update the navbar status badge in App to reflect authentication (remove the "No login required" label).
-
-````edit file="travel-planner-pro-7968-7977/travel_planner_frontend/src/index.js"
-<<<<<<< SEARCH
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './App';
-
-// PUBLIC_INTERFACE
-function Root() {
-  /** Root entry point rendering the Travel Planner app. */
-  return <App />;
-}
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <Root />
-  </React.StrictMode>
-);
-=======
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './App';
-import AuthGate from './AuthGate';
-
-// PUBLIC_INTERFACE
-function Root() {
-  /** Root entry point rendering the Travel Planner app with authentication gate. */
-  return (
-    <AuthGate>
-      <App />
-    </AuthGate>
-  );
-}
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <Root />
-  </React.StrictMode>
-);
->>>>>>> REPLACE
