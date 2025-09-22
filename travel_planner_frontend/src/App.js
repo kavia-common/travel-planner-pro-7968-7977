@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./index.css";
@@ -66,13 +66,36 @@ function useLocalState(key, initial) {
   return [value, setValue];
 }
 
-// Map click handler
+/**
+ * Capture click events to add waypoints.
+ */
 function ClickCapture({ onClick }) {
   useMapEvents({
     click(e) {
       onClick?.(e.latlng);
     }
   });
+  return null;
+}
+
+/**
+ * Keep external center/zoom in sync when user pans/zooms map.
+ */
+function MapSync({ onCenterZoomChange }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = () => {
+      const c = map.getCenter();
+      const z = map.getZoom();
+      onCenterZoomChange?.({ lat: c.lat, lon: c.lng, zoom: z });
+    };
+    map.on("moveend", handler);
+    map.on("zoomend", handler);
+    return () => {
+      map.off("moveend", handler);
+      map.off("zoomend", handler);
+    };
+  }, [map, onCenterZoomChange]);
   return null;
 }
 
@@ -90,6 +113,8 @@ export default function App() {
   const [isFetching, setIsFetching] = useState(false);
   const [isRouting, setIsRouting] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [lastClick, setLastClick] = useState(null);
+  const [query, setQuery] = useState("");
 
   // Derived
   const leafletCenter = useMemo(() => [center.lat, center.lon], [center]);
@@ -131,6 +156,66 @@ export default function App() {
     }
   }, [center, radius]);
 
+  // PUBLIC_INTERFACE
+  async function geocodeCity(q) {
+    /** Geocode a city or address using free OSM Nominatim and center the map. */
+    if (!q || !q.trim()) return;
+    try {
+      const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`);
+      if (!resp.ok) throw new Error(`Geocode error: ${resp.status}`);
+      const arr = await resp.json();
+      if (arr && arr[0]) {
+        const lat = parseFloat(arr[0].lat);
+        const lon = parseFloat(arr[0].lon);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          setCenter({ lat, lon });
+          setZoom(12);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // PUBLIC_INTERFACE
+  function locateMe() {
+    /** Use browser geolocation to center the map on user's current location (no API key needed). */
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setCenter({ lat: latitude, lon: longitude });
+        setZoom(13);
+      },
+      (err) => {
+        console.error(err);
+        alert("Unable to retrieve your location.");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  }
+
+  const discoverAtLastClick = useCallback(async () => {
+    if (!lastClick) return;
+    setIsFetching(true);
+    try {
+      const res = await fetchAttractionsAround(lastClick.lat, lastClick.lon, radius);
+      const filtered = res.filter((i) => {
+        const t = i.tags || {};
+        return !!(t.tourism || t.amenity || t.leisure || t.historic);
+      });
+      setAttractions(filtered.slice(0, 60));
+      setCenter({ lat: lastClick.lat, lon: lastClick.lon });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsFetching(false);
+    }
+  }, [lastClick, radius]);
+
   const addToItinerary = useCallback((item) => {
     setItinerary((prev) => {
       if (prev.find((p) => p.id === item.id)) return prev;
@@ -167,6 +252,16 @@ export default function App() {
         </div>
         <div className="row">
           <span className="badge">No login required</span>
+          <input
+            className="input"
+            placeholder="Search city or address (e.g., Rome, Tokyo)"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ width: 240 }}
+            aria-label="Search city or address"
+          />
+          <button className="btn" onClick={() => geocodeCity(query)}>Search</button>
+          <button className="btn ghost" onClick={locateMe} aria-label="Locate me">📍 Locate me</button>
           <button className="btn ghost" onClick={() => handleFetchAttractions()}>
             🔍 Discover nearby
           </button>
@@ -284,6 +379,9 @@ export default function App() {
             <span className="badge">Center: {center.lat.toFixed(4)}, {center.lon.toFixed(4)}</span>
             <button className="btn ghost" onClick={() => setZoom((z) => Math.min(18, z + 1))}>＋</button>
             <button className="btn ghost" onClick={() => setZoom((z) => Math.max(3, z - 1))}>－</button>
+            <button className="btn ghost" onClick={discoverAtLastClick} disabled={!lastClick || isFetching}>
+              {isFetching ? "Discovering…" : "Discover here"}
+            </button>
           </div>
           <MapContainer
             center={leafletCenter}
@@ -295,7 +393,8 @@ export default function App() {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <ClickCapture onClick={onMapClickAddWaypoint} />
+            <MapSync onCenterZoomChange={({ lat, lon, zoom: z }) => { setCenter({ lat, lon }); setZoom(z); }} />
+            <ClickCapture onClick={(ll) => { setLastClick({ lat: ll.lat, lon: ll.lng }); onMapClickAddWaypoint(ll); }} />
             {/* Current center marker */}
             <Marker position={[center.lat, center.lon]}>
               <Popup>

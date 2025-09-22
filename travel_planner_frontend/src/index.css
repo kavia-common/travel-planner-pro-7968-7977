@@ -150,6 +150,7 @@ a:hover { text-decoration: underline; }
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+  min-height: 360px; /* ensure the map area is always interactable */
 }
 
 .map-toolbar {
