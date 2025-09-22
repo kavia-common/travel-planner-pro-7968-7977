@@ -205,24 +205,96 @@ export default function App() {
   }
 
   // PUBLIC_INTERFACE
-  function locateMe() {
-    /** Use browser geolocation to center the map on user's current location (no API key needed). */
+  async function locateMe() {
+    /** Use browser geolocation to center and zoom the map on user's current location and add a "Your Location" entry with reverse-geocoded address. */
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser.");
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setCenter({ lat: latitude, lon: longitude });
-        setZoom(14);
-      },
-      (err) => {
-        console.error(err);
-        alert("Unable to retrieve your location.");
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-    );
+
+    // Helper: reverse-geocode using OSM Nominatim
+    async function reverseGeocode(lat, lon) {
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(
+          lat
+        )}&lon=${encodeURIComponent(lon)}&zoom=16&addressdetails=1`;
+        const resp = await fetch(url, {
+          headers: {
+            "Accept": "application/json",
+          },
+        });
+        if (!resp.ok) throw new Error(`Reverse geocode error: ${resp.status}`);
+        const data = await resp.json();
+        return data.display_name || null;
+      } catch (e) {
+        console.warn("Reverse geocoding failed:", e);
+        return null;
+      }
+    }
+
+    // Wrap geolocation in a promise for reliable async/await control flow
+    const getPosition = () =>
+      new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(pos),
+          (err) => reject(err),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
+      });
+
+    try {
+      const pos = await getPosition();
+      const { latitude, longitude } = pos.coords;
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        alert("We received invalid coordinates from your device. Please try again.");
+        return;
+      }
+
+      // Animate map to location with a suitable zoom; MapFollow observes state changes
+      setCenter({ lat, lon });
+      setZoom((z) => (typeof z === "number" ? Math.max(z, 15) : 15)); // ensure a close zoom
+
+      // Reverse-geocode and add/update "Your Location" at top of itinerary
+      const displayName = await reverseGeocode(lat, lon);
+      const name =
+        displayName?.length ? `Your Location — ${displayName}` : `Your Location — (${lat.toFixed(5)}, ${lon.toFixed(5)})`;
+
+      setItinerary((prev) => {
+        // If an entry already exists, move it to top and update its name/coords
+        const existingIdx = prev.findIndex((p) => p.id === "your-location");
+        const yourLocation = {
+          id: "your-location",
+          name,
+          lat,
+          lon,
+          tags: { type: "your-location" },
+        };
+        if (existingIdx >= 0) {
+          const cloned = [...prev];
+          // Remove existing
+          cloned.splice(existingIdx, 1);
+          // Add to top
+          return [yourLocation, ...cloned];
+        }
+        // Insert as the first item
+        return [yourLocation, ...prev];
+      });
+    } catch (err) {
+      console.error("Geolocation error:", err);
+      // User-friendly error messages based on error codes
+      const msg =
+        err?.code === 1
+          ? "Location permission denied. Please allow access to use Locate Me."
+          : err?.code === 2
+          ? "Position unavailable. Please try again near a window or outdoors."
+          : err?.code === 3
+          ? "Timed out while trying to determine your location."
+          : "Unable to retrieve your location.";
+      alert(msg);
+    }
   }
 
   const discoverAtLastClick = useCallback(async () => {
@@ -329,10 +401,22 @@ export default function App() {
               {itinerary.map((item, idx) => (
                 <div className="item" key={item.id}>
                   <div>
-                    <p className="item-title">{idx + 1}. {item.name}</p>
+                    <p className="item-title">
+                      {idx + 1}.{" "}
+                      {item.id === "your-location" && <span className="badge" style={{ marginRight: 6 }}>Your Location</span>}
+                      {item.name}
+                    </p>
                     <p className="item-sub">{item.lat.toFixed(4)}, {item.lon.toFixed(4)}</p>
                     <div className="row" style={{ marginTop: 8 }}>
-                      <button className="btn ghost" onClick={() => { setCenter({ lat: item.lat, lon: item.lon }); setZoom((z) => Math.max(z, 14)); }}>Center</button>
+                      <button
+                        className="btn ghost"
+                        onClick={() => {
+                          setCenter({ lat: item.lat, lon: item.lon });
+                          setZoom((z) => Math.max(z, 15));
+                        }}
+                      >
+                        Center
+                      </button>
                       <button className="btn secondary" onClick={() => setSelected(item)}>Details</button>
                     </div>
                   </div>
@@ -427,7 +511,14 @@ export default function App() {
             {/* Current center marker */}
             <Marker position={[center.lat, center.lon]}>
               <Popup>
-                Map center<br />
+                {itinerary[0]?.id === "your-location" &&
+                  Math.abs(itinerary[0].lat - center.lat) < 1e-4 &&
+                  Math.abs(itinerary[0].lon - center.lon) < 1e-4 ? (
+                  <strong>Your Location</strong>
+                ) : (
+                  <strong>Map center</strong>
+                )}
+                <br />
                 {center.lat.toFixed(4)}, {center.lon.toFixed(4)}
               </Popup>
             </Marker>
