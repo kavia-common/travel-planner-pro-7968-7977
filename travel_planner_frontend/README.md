@@ -1,13 +1,13 @@
 # Travel Planner Frontend (React)
 
 A modern, Ocean Professional themed travel planner that provides:
+- Authentication (Login/Signup) with localStorage-backed user data (simulating a JSON file)
 - Navigation bar
 - Split view: itinerary and attractions on the left; interactive OpenStreetMap on the right
 - Discover attractions via Overpass API (free)
 - Build/edit itinerary; click map to add custom waypoints
 - Route planning via OSRM public demo server for walking/cycling/driving
 - Modals for details and add-to-itinerary
-- No authentication required
 
 ## Run
 
@@ -15,6 +15,16 @@ A modern, Ocean Professional themed travel planner that provides:
 - npm start
 
 App runs at http://localhost:3000
+
+## Authentication
+
+- Users can sign up with name, email, and password.
+- Credentials are stored locally in the browser's localStorage as a JSON array; password is stored using a simple non-cryptographic hash (for demo only).
+- On login, credentials are verified against the stored users. A session object is saved to localStorage.
+- The planner UI is gated behind authentication and becomes accessible after successful login.
+- Logout clears the session. To remove users, clear site data in your browser devtools.
+
+Security note: This is for demo/dev usage only. Do not use this approach in production.
 
 ## APIs used (free/open-source)
 

@@ -351,7 +351,6 @@ export default function App() {
           </div>
         </div>
         <div className="row">
-          <span className="badge">No login required</span>
           <input
             className="input"
             placeholder="Search city or address (e.g., Rome, Tokyo)"
