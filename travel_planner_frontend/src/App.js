@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -99,6 +99,31 @@ function MapSync({ onCenterZoomChange }) {
   return null;
 }
 
+/**
+ * Sync external center/zoom state TO the Leaflet map, with smooth animation.
+ * This complements MapSync (which syncs FROM the map to state).
+ */
+function MapFollow({ center, zoom }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || !center || !Number.isFinite(center.lat) || !Number.isFinite(center.lon)) return;
+    const current = map.getCenter();
+    const currentZoom = map.getZoom();
+    const latChanged = Math.abs(current.lat - center.lat) > 1e-6;
+    const lonChanged = Math.abs(current.lng - center.lon) > 1e-6;
+    const zoomChanged = typeof zoom === "number" && zoom !== currentZoom;
+
+    // Only animate if something actually changed
+    if (latChanged || lonChanged || zoomChanged) {
+      const nextZoom = typeof zoom === "number" ? zoom : currentZoom;
+      map.flyTo([center.lat, center.lon], nextZoom, { animate: true, duration: 0.8 });
+    }
+  }, [map, center, zoom]);
+
+  return null;
+}
+
 // PUBLIC_INTERFACE
 export default function App() {
   /** Travel Planner main app with Ocean Professional theme, split layout, and map-based planning. */
@@ -168,8 +193,10 @@ export default function App() {
         const lat = parseFloat(arr[0].lat);
         const lon = parseFloat(arr[0].lon);
         if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          // Update state; MapFollow will animate the map to this position.
           setCenter({ lat, lon });
-          setZoom(12);
+          // Use a reasonable default zoom when jumping to a new search result.
+          setZoom(14);
         }
       }
     } catch (err) {
@@ -188,7 +215,7 @@ export default function App() {
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setCenter({ lat: latitude, lon: longitude });
-        setZoom(13);
+        setZoom(14);
       },
       (err) => {
         console.error(err);
@@ -209,6 +236,7 @@ export default function App() {
       });
       setAttractions(filtered.slice(0, 60));
       setCenter({ lat: lastClick.lat, lon: lastClick.lon });
+      setZoom((z) => Math.max(z, 14));
     } catch (e) {
       console.error(e);
     } finally {
@@ -304,7 +332,7 @@ export default function App() {
                     <p className="item-title">{idx + 1}. {item.name}</p>
                     <p className="item-sub">{item.lat.toFixed(4)}, {item.lon.toFixed(4)}</p>
                     <div className="row" style={{ marginTop: 8 }}>
-                      <button className="btn ghost" onClick={() => setCenter({ lat: item.lat, lon: item.lon })}>Center</button>
+                      <button className="btn ghost" onClick={() => { setCenter({ lat: item.lat, lon: item.lon }); setZoom((z) => Math.max(z, 14)); }}>Center</button>
                       <button className="btn secondary" onClick={() => setSelected(item)}>Details</button>
                     </div>
                   </div>
@@ -361,7 +389,7 @@ export default function App() {
                       {a.lat.toFixed(4)}, {a.lon.toFixed(4)}
                     </p>
                     <div className="row" style={{ marginTop: 8 }}>
-                      <button className="btn ghost" onClick={() => setCenter({ lat: a.lat, lon: a.lon })}>Center</button>
+                      <button className="btn ghost" onClick={() => { setCenter({ lat: a.lat, lon: a.lon }); setZoom((z) => Math.max(z, 14)); }}>Center</button>
                       <button className="btn secondary" onClick={() => setSelected(a)}>Details</button>
                     </div>
                   </div>
@@ -394,6 +422,7 @@ export default function App() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <MapSync onCenterZoomChange={({ lat, lon, zoom: z }) => { setCenter({ lat, lon }); setZoom(z); }} />
+            <MapFollow center={center} zoom={zoom} />
             <ClickCapture onClick={(ll) => { setLastClick({ lat: ll.lat, lon: ll.lng }); onMapClickAddWaypoint(ll); }} />
             {/* Current center marker */}
             <Marker position={[center.lat, center.lon]}>
