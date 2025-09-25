@@ -5,6 +5,7 @@ import "leaflet/dist/leaflet.css";
 import "./index.css";
 import { theme } from "./theme";
 import { fetchAttractionsAround, routeBetween, nominatimSearchPlaces, reverseGeocode } from "./api";
+import { getGooglePlaceDetailsByText, getGoogleDirectionsSummary, travelSafetyTip } from "./google";
 
 // Fix default icon assets for Leaflet in CRA
 delete L.Icon.Default.prototype._getIconUrl;
@@ -125,7 +126,7 @@ function MapFollow({ center, zoom }) {
 }
 
 /**
- * Helper: categories mapping for "All Places", Pilgrim, Nature, Historic.
+ * Helper: categories mapping for "All Places", Pilgrim, Nature, Historic, Attractions.
  * "All Places" includes a broad set of common POI keys.
  */
 const CATEGORY_OPTIONS = [
@@ -153,7 +154,7 @@ const CATEGORY_OPTIONS = [
   },
   {
     key: "pilgrim",
-    label: "Pilgrim",
+    label: "Pilgrimage",
     overpassFilters: [
       "amenity=place_of_worship",
       "tourism=attraction",
@@ -179,7 +180,7 @@ const CATEGORY_OPTIONS = [
   },
   {
     key: "historic",
-    label: "Historic",
+    label: "Historical",
     overpassFilters: [
       "historic",
       "tourism=attraction",
@@ -189,6 +190,21 @@ const CATEGORY_OPTIONS = [
       "historic=ruins",
       "historic=monument",
       "historic=memorial",
+    ],
+  },
+  {
+    key: "attractions",
+    label: "Attractions",
+    overpassFilters: [
+      "tourism=attraction",
+      "tourism=museum",
+      "leisure=park",
+      "amenity=theatre",
+      "amenity=arts_centre",
+      "amenity=cinema",
+      "historic=monument",
+      "natural=waterfall",
+      "natural=peak",
     ],
   },
 ];
@@ -675,7 +691,7 @@ export default function App() {
           </Section>
 
           <Section
-            title={`Discover attractions — ${CATEGORY_OPTIONS.find(c => c.key === category)?.label || ""}`}
+            title={`Discover places — ${CATEGORY_OPTIONS.find(c => c.key === category)?.label || ""}`}
             right={
               <div className="row">
                 <button className="btn" onClick={handleFetchAttractions} disabled={isFetching}>
@@ -709,6 +725,9 @@ export default function App() {
                       <p className="item-sub">
                         {(a.desc || a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
                         {" · "}
+                        Rating: N/A • Reviews: N/A
+                      </p>
+                      <p className="item-sub" style={{ marginTop: 2 }}>
                         {a.lat.toFixed(4)}, {a.lon.toFixed(4)}
                       </p>
                       <div className="row" style={{ marginTop: 8 }}>
@@ -788,30 +807,16 @@ export default function App() {
                 </Popup>
               </Marker>
             )}
-            {/* Attraction markers */}
-            {attractions.map((a) => (
-              <Marker key={a.id} position={[a.lat, a.lon]}>
-                <Popup>
-                  <strong>{a.name}</strong><br />
-                  {(a.desc || a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
-                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {!selectedPlaceIds.has(a.id) ? (
-                      <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
-                    ) : (
-                      <button className="btn danger" onClick={() => removeFromItinerary(a.id)}>Remove</button>
-                    )}
-                    {startMode === "custom" && (
-                      <button className="btn secondary" onClick={() => setCustomStart({ ...a, id: "custom-start" })}>Set as start</button>
-                    )}
-                    <button className="btn ghost" onClick={() => setSelected(a)}>Details</button>
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
+            {/* Only show markers for user-selected places (itinerary) */}
+            {/* Attraction discovery results are listed in the left panel, not shown on the map until selected */}
             {/* Itinerary markers */}
-            {itinerary.map((p) => (
+            {itinerary.map((p, idx) => (
               <Marker key={`it-${p.id}`} position={[p.lat, p.lon]}>
                 <Popup>
+                  <div className="row" style={{ marginBottom: 6 }}>
+                    <span className="badge" title="Trip order">{idx + 1}</span>
+                    {p.id === "your-location" && <span className="badge">Start</span>}
+                  </div>
                   <strong>{p.name}</strong><br />
                   {p.lat.toFixed(4)}, {p.lon.toFixed(4)}
                   <div style={{ marginTop: 8 }}>
@@ -832,7 +837,7 @@ export default function App() {
       </main>
 
       <Modal
-        title={selected?.name || "Details"}
+        title={selected?.name || "Trip Advisor"}
         open={!!selected}
         onClose={() => setSelected(null)}
         footer={
@@ -847,31 +852,125 @@ export default function App() {
           </div>
         }
       >
-        {selected && (
-          <div>
-            <div className="row" style={{ marginBottom: 8 }}>
-              <span className="badge">{selected.tags?.tourism || selected.tags?.amenity || selected.tags?.leisure || selected.tags?.historic || selected.tags?.natural || "place"}</span>
-              <span className="badge">{selected.type || "node"}</span>
-            </div>
-            <p style={{ marginTop: 0, color: "#374151" }}>
-              Coordinates: {selected.lat.toFixed(5)}, {selected.lon.toFixed(5)}
-            </p>
-            {selected.tags && (
-              <div className="panel">
-                <h4 className="panel-title">Tags</h4>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  {Object.entries(selected.tags).slice(0, 16).map(([k, v]) => (
-                    <div key={k} className="item" style={{ gridTemplateColumns: "1fr" }}>
-                      <div style={{ fontSize: 12, color: "#6B7280" }}>{k}</div>
-                      <div style={{ fontSize: 14 }}>{String(v)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        {selected && <TripAdvisorPanel place={selected} profile={profile} itinerary={itinerary} />}
       </Modal>
+    </div>
+  );
+}
+
+/**
+ * TripAdvisorPanel: shows official place details (Google if available), rating/reviews,
+ * an estimated route/time from previous itinerary stop (or start), and a basic travel tip.
+ */
+/* PUBLIC_INTERFACE */
+function TripAdvisorPanel({ place, profile, itinerary }) {
+  /** Displays Trip Advisor summary for a place using optional Google data and best-available routing. */
+  const [gInfo, setGInfo] = useState(null);
+  const [dir, setDir] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const prevPoint = useMemo(() => {
+    const idx = itinerary.findIndex((it) => it.id === place.id);
+    if (idx > 0) return itinerary[idx - 1];
+    // if not in itinerary yet, pick the last itinerary point as origin
+    if (itinerary.length > 0) return itinerary[itinerary.length - 1];
+    return null;
+  }, [itinerary, place.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const [gi, dr] = await Promise.all([
+          getGooglePlaceDetailsByText(place.name),
+          prevPoint
+            ? getGoogleDirectionsSummary(
+                [
+                  { lat: prevPoint.lat, lon: prevPoint.lon },
+                  { lat: place.lat, lon: place.lon },
+                ],
+                profile
+              )
+            : Promise.resolve({ ok: true, route: { distance: null, duration: null }, simulated: true }),
+        ]);
+        if (!cancelled) {
+          setGInfo(gi);
+          setDir(dr);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [place, prevPoint, profile]);
+
+  const rating = gInfo?.ok ? gInfo.place?.rating : null;
+  const reviews = gInfo?.ok ? gInfo.place?.user_ratings_total : null;
+  const officialName = gInfo?.ok && gInfo.place?.name ? gInfo.place.name : place.name;
+  const address = gInfo?.ok ? gInfo.place?.formatted_address : "";
+
+  const distanceKm =
+    typeof dir?.route?.distance === "number" ? (dir.route.distance / 1000).toFixed(1) : "N/A";
+  const durationMin =
+    typeof dir?.route?.duration === "number" ? Math.round(dir.route.duration / 60) : "N/A";
+
+  const tip = travelSafetyTip(profile);
+
+  return (
+    <div>
+      <div className="panel" style={{ marginBottom: 8 }}>
+        <h4 className="panel-title">Official details</h4>
+        <p style={{ margin: "4px 0", fontWeight: 600 }}>{officialName}</p>
+        {address && <p className="item-sub" style={{ marginTop: 0 }}>{address}</p>}
+        <p className="item-sub" style={{ marginTop: 0 }}>
+          Coordinates: {place.lat.toFixed(5)}, {place.lon.toFixed(5)}
+        </p>
+        <div className="row" style={{ marginTop: 6 }}>
+          <span className="badge">Rating: {rating ?? "N/A"}</span>
+          <span className="badge">Reviews: {reviews ?? "N/A"}</span>
+          {gInfo?.simulated && (
+            <span className="badge" title="Provide REACT_APP_GOOGLE_MAPS_API_KEY to enable real ratings">Simulated</span>
+          )}
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 8 }}>
+        <h4 className="panel-title">Best route</h4>
+        {prevPoint ? (
+          <>
+            <p className="item-sub" style={{ marginTop: 0 }}>
+              From: {prevPoint.name}
+            </p>
+            <div className="row">
+              <span className="badge">{profile === "car" ? "Driving" : profile === "bike" ? "Cycling" : "Walking"}</span>
+              <span className="badge">Distance: {distanceKm} km</span>
+              <span className="badge">Time: {durationMin} min</span>
+              {dir?.simulated && (
+                <span className="badge" title="Provide Google API key to enable Directions">Simulated</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="item-sub" style={{ marginTop: 0 }}>
+            Add a starting point or another place to estimate travel distance and time.
+          </p>
+        )}
+      </div>
+
+      <div className="panel">
+        <h4 className="panel-title">Safety tip</h4>
+        <p className="item-sub" style={{ marginTop: 0 }}>{tip}</p>
+      </div>
+
+      {loading && (
+        <div className="row" style={{ marginTop: 8 }}>
+          <span className="badge">Fetching details…</span>
+        </div>
+      )}
     </div>
   );
 }
