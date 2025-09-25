@@ -5,6 +5,7 @@ A modern, Ocean Professional themed travel planner that provides:
 - Navigation bar
 - Split view: itinerary and attractions on the left; interactive OpenStreetMap on the right
 - Discover attractions via Overpass API (free), with category selection:
+  - All Places (broad POIs: tourism, amenity, leisure, natural, historic, etc.)
   - Pilgrim (famous temples and places of worship)
   - Nature (trekking, waterfalls, rivers, parks, reserves)
   - Historic (castles, archaeological sites, monuments)

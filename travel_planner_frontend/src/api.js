@@ -9,6 +9,7 @@ const OSRM_BASE = "https://router.project-osrm.org";
 /**
  * Build Overpass QL query for POIs around a coordinate within radius.
  * categories can be a list of tag keys or full key=value filters.
+ * Returns up to the service's safe default limit; we handle paging in UI by indicating "more available".
  */
 function buildOverpassQuery(lat, lon, radius = 1200, categories = ["tourism", "amenity"]) {
   const toFilter = (entry) => {
@@ -32,8 +33,22 @@ function buildOverpassQuery(lat, lon, radius = 1200, categories = ["tourism", "a
     (
       ${filters}
     );
-    out center 80;
+    out center 200;
   `;
+}
+
+/**
+ * Create a short description for a place from its OSM tags.
+ */
+function shortDescriptionFromTags(tags = {}) {
+  const parts = [];
+  const kind = tags.tourism || tags.amenity || tags.leisure || tags.historic || tags.natural || tags.heritage || tags.place;
+  if (kind) parts.push(String(kind).replace(/_/g, " "));
+  if (tags["wikidata"]) parts.push("heritage");
+  if (tags.religion) parts.push(tags.religion);
+  if (tags.operator) parts.push(tags.operator);
+  if (tags["isced:level"]) parts.push(tags["isced:level"]);
+  return parts.length ? parts.slice(0, 3).join(" • ") : "Place of interest";
 }
 
 // PUBLIC_INTERFACE
@@ -47,17 +62,19 @@ export async function fetchAttractionsAround(lat, lon, radius = 1200, categories
   });
   if (!res.ok) throw new Error(`Overpass error: ${res.status}`);
   const data = await res.json();
-  // Normalize elements to { id, name, lat, lon, tags }
+  // Normalize elements to { id, name, lat, lon, tags, desc }
   const items = (data.elements || [])
     .map((el) => {
       const center = el.type === "node" ? { lat: el.lat, lon: el.lon } : el.center || {};
+      const tags = el.tags || {};
       return {
         id: `${el.type}/${el.id}`,
-        name: el.tags?.name || el.tags?.["name:en"] || Object.values(el.tags || {})[0] || "Unknown",
+        name: tags?.name || tags?.["name:en"] || Object.values(tags || {})[0] || "Unknown",
         lat: center.lat,
         lon: center.lon,
-        tags: el.tags || {},
-        type: el.type
+        tags,
+        type: el.type,
+        desc: shortDescriptionFromTags(tags),
       };
     })
     .filter((i) => Number.isFinite(i.lat) && Number.isFinite(i.lon));

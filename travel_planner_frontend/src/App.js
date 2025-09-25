@@ -124,12 +124,36 @@ function MapFollow({ center, zoom }) {
   return null;
 }
 
-// Helper: categories mapping for Pilgrim / Nature / Historic
+/**
+ * Helper: categories mapping for "All Places", Pilgrim, Nature, Historic.
+ * "All Places" includes a broad set of common POI keys.
+ */
 const CATEGORY_OPTIONS = [
+  {
+    key: "all",
+    label: "All Places",
+    overpassFilters: [
+      "tourism",
+      "amenity",
+      "leisure",
+      "historic",
+      "natural",
+      "heritage",
+      "place",
+      "shop",
+      "man_made",
+      "attraction",
+      "tourism=attraction",
+      "amenity=place_of_worship",
+      "leisure=park",
+      "boundary=national_park",
+      "natural=peak",
+      "natural=waterfall",
+    ],
+  },
   {
     key: "pilgrim",
     label: "Pilgrim",
-    // Very famous temples and major religious sites
     overpassFilters: [
       "amenity=place_of_worship",
       "tourism=attraction",
@@ -140,7 +164,6 @@ const CATEGORY_OPTIONS = [
   {
     key: "nature",
     label: "Nature",
-    // Trekking, waterfalls, rivers, dams, safari, parks
     overpassFilters: [
       "tourism=viewpoint",
       "tourism=attraction",
@@ -157,7 +180,6 @@ const CATEGORY_OPTIONS = [
   {
     key: "historic",
     label: "Historic",
-    // Very famous historic places
     overpassFilters: [
       "historic",
       "tourism=attraction",
@@ -181,6 +203,8 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [itinerary, setItinerary] = useLocalState("itinerary", []);
   const [route, setRoute] = useState(null);
+  const [selectedPlaceIds, setSelectedPlaceIds] = useState(() => new Set());
+  const [resultsCapped, setResultsCapped] = useState(false);
   const [radius, setRadius] = useLocalState("searchRadius", 1200);
   const [isFetching, setIsFetching] = useState(false);
   const [isRouting, setIsRouting] = useState(false);
@@ -188,7 +212,7 @@ export default function App() {
   const [lastClick, setLastClick] = useState(null);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
-  const [category, setCategory] = useLocalState("discoverCategory", "pilgrim"); // pilgrim, nature, historic
+  const [category, setCategory] = useLocalState("discoverCategory", "all"); // all, pilgrim, nature, historic
   const [startMode, setStartMode] = useLocalState("startMode", "current"); // current | custom
   const [customStart, setCustomStart] = useLocalState("customStart", null); // {lat, lon, name, id}
 
@@ -237,12 +261,14 @@ export default function App() {
     setIsFetching(true);
     try {
       const res = await fetchAttractionsAround(center.lat, center.lon, radius, categoryFilters);
-      // Basic filtering to interesting tags
+      // Keep all relevant items; show as many as API returns but cap UI for performance
       const filtered = res.filter((i) => {
         const t = i.tags || {};
-        return !!(t.tourism || t.amenity || t.leisure || t.historic || t.natural || t.heritage);
+        return !!(t.tourism || t.amenity || t.leisure || t.historic || t.natural || t.heritage || t.place || t.shop || t.man_made);
       });
-      setAttractions(filtered.slice(0, 80));
+      const MAX_SHOW = 120;
+      setResultsCapped(filtered.length > MAX_SHOW);
+      setAttractions(filtered.slice(0, MAX_SHOW));
     } catch (e) {
       console.error(e);
     } finally {
@@ -359,13 +385,22 @@ export default function App() {
       if (prev.find((p) => p.id === item.id)) return prev;
       return [...prev, item];
     });
+    setSelectedPlaceIds((prev) => new Set([...prev, item.id]));
   }, [setItinerary]);
 
   const removeFromItinerary = useCallback((id) => {
     setItinerary((prev) => prev.filter((p) => p.id !== id));
+    setSelectedPlaceIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }, [setItinerary]);
 
-  const clearItinerary = useCallback(() => setItinerary([]), [setItinerary]);
+  const clearItinerary = useCallback(() => {
+    setItinerary([]);
+    setSelectedPlaceIds(new Set());
+  }, [setItinerary]);
 
   const onMapClickAddWaypoint = useCallback((latlng) => {
     const point = {
@@ -436,6 +471,7 @@ export default function App() {
             onChange={(e) => setProfile(e.target.value)}
             aria-label="Travel mode"
             style={{ width: 140 }}
+            title="Choose a profile for the safest route on OSRM"
           >
             <option value="foot">Walking</option>
             <option value="bike">Cycling</option>
@@ -518,17 +554,20 @@ export default function App() {
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>Category</div>
-                  <select
-                    className="select"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    aria-label="Category"
-                    style={{ width: 160 }}
-                  >
-                    <option value="pilgrim">Pilgrim (temples)</option>
-                    <option value="nature">Nature</option>
-                    <option value="historic">Historic</option>
-                  </select>
+                  <div className="row" role="tablist" aria-label="Category">
+                    {CATEGORY_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.key}
+                        className={`btn ghost ${category === opt.key ? "" : ""}`}
+                        onClick={() => setCategory(opt.key)}
+                        aria-selected={category === opt.key}
+                        role="tab"
+                        title={opt.label}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>Radius (m)</div>
@@ -615,12 +654,24 @@ export default function App() {
                 </div>
               ))}
             </div>
-            {route && (
-              <div style={{ marginTop: 8, fontSize: 13, color: "#374151" }}>
-                <strong>Route:</strong> {(route.distance/1000).toFixed(1)} km • {(route.duration/60).toFixed(0)} min ({profile})
+            <div className="panel" style={{ marginTop: 8 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <div className="row">
+                  <span className="badge">Selected: {selectedPlaceIds.size}</span>
+                  {route && (
+                    <span className="badge" title="Total distance and duration of the recommended route">
+                      {(route.distance/1000).toFixed(1)} km • {(route.duration/60).toFixed(0)} min
+                    </span>
+                  )}
+                </div>
+                <div className="row">
+                  <button className="btn ghost" onClick={recalcRoute} disabled={isRouting || itinerary.length < 2}>
+                    {isRouting ? "Routing…" : "Recalculate route"}
+                  </button>
+                  <button className="btn ghost" onClick={clearItinerary} disabled={itinerary.length === 0}>Clear itinerary</button>
+                </div>
               </div>
-            )}
-            {isRouting && <div className="badge" style={{ marginTop: 8 }}>Calculating route…</div>}
+            </div>
           </Section>
 
           <Section
@@ -633,6 +684,11 @@ export default function App() {
               </div>
             }
           >
+            {resultsCapped && (
+              <div className="badge" title="More results available; refine radius or pan the map to load more.">
+                Showing first {attractions.length} results (more available)
+              </div>
+            )}
             <div className="list">
               {attractions.length === 0 && (
                 <div className="item">
@@ -642,32 +698,46 @@ export default function App() {
                   </div>
                 </div>
               )}
-              {attractions.map((a) => (
-                <div className="item" key={a.id}>
-                  <div>
-                    <p className="item-title">{a.name}</p>
-                    <p className="item-sub">
-                      {(a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
-                      {" · "}
-                      {a.lat.toFixed(4)}, {a.lon.toFixed(4)}
-                    </p>
-                    <div className="row" style={{ marginTop: 8 }}>
-                      <button className="btn ghost" onClick={() => { setCenter({ lat: a.lat, lon: a.lon }); setZoom((z) => Math.max(z, 14)); }}>Center</button>
-                      <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
-                      {startMode === "custom" && (
+              {attractions.map((a) => {
+                const isSelected = selectedPlaceIds.has(a.id);
+                return (
+                  <div className="item" key={a.id} style={isSelected ? { borderColor: "#2563EB", background: "#EFF6FF" } : undefined}>
+                    <div>
+                      <p className="item-title">
+                        {a.name} {isSelected && <span className="badge" style={{ marginLeft: 6 }}>Selected</span>}
+                      </p>
+                      <p className="item-sub">
+                        {(a.desc || a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
+                        {" · "}
+                        {a.lat.toFixed(4)}, {a.lon.toFixed(4)}
+                      </p>
+                      <div className="row" style={{ marginTop: 8 }}>
                         <button
-                          className="btn secondary"
-                          onClick={() => setCustomStart({ ...a, id: "custom-start" })}
-                          title="Set as custom start"
+                          className="btn ghost"
+                          onClick={() => { setCenter({ lat: a.lat, lon: a.lon }); setZoom((z) => Math.max(z, 14)); }}
                         >
-                          Set as start
+                          Center
                         </button>
-                      )}
-                      <button className="btn ghost" onClick={() => setSelected(a)}>Details</button>
+                        {!isSelected ? (
+                          <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
+                        ) : (
+                          <button className="btn danger" onClick={() => removeFromItinerary(a.id)}>Remove</button>
+                        )}
+                        {startMode === "custom" && (
+                          <button
+                            className="btn secondary"
+                            onClick={() => setCustomStart({ ...a, id: "custom-start" })}
+                            title="Set as custom start"
+                          >
+                            Set as start
+                          </button>
+                        )}
+                        <button className="btn ghost" onClick={() => setSelected(a)}>Details</button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Section>
         </div>
@@ -723,9 +793,13 @@ export default function App() {
               <Marker key={a.id} position={[a.lat, a.lon]}>
                 <Popup>
                   <strong>{a.name}</strong><br />
-                  {(a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
+                  {(a.desc || a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
                   <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
+                    {!selectedPlaceIds.has(a.id) ? (
+                      <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
+                    ) : (
+                      <button className="btn danger" onClick={() => removeFromItinerary(a.id)}>Remove</button>
+                    )}
                     {startMode === "custom" && (
                       <button className="btn secondary" onClick={() => setCustomStart({ ...a, id: "custom-start" })}>Set as start</button>
                     )}
@@ -750,7 +824,7 @@ export default function App() {
             {route?.geometry && (
               <Polyline
                 positions={route.geometry.coordinates.map(([x, y]) => [y, x])}
-                pathOptions={{ color: theme.colors.primary, weight: 5, opacity: 0.8 }}
+                pathOptions={{ color: theme.colors.primary, weight: 6, opacity: 0.9 }}
               />
             )}
           </MapContainer>
@@ -763,7 +837,12 @@ export default function App() {
         onClose={() => setSelected(null)}
         footer={
           <div className="row">
-            {selected && <button className="btn" onClick={() => { addToItinerary(selected); setSelected(null); }}>Add to itinerary</button>}
+            {selected && !selectedPlaceIds.has(selected.id) && (
+              <button className="btn" onClick={() => { addToItinerary(selected); setSelected(null); }}>Add to itinerary</button>
+            )}
+            {selected && selectedPlaceIds.has(selected.id) && (
+              <button className="btn danger" onClick={() => { removeFromItinerary(selected.id); setSelected(null); }}>Remove</button>
+            )}
             <button className="btn ghost" onClick={() => setSelected(null)}>Close</button>
           </div>
         }
