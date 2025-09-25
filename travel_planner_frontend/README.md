@@ -4,9 +4,14 @@ A modern, Ocean Professional themed travel planner that provides:
 - Authentication (Login/Signup) with localStorage-backed user data (simulating a JSON file)
 - Navigation bar
 - Split view: itinerary and attractions on the left; interactive OpenStreetMap on the right
-- Discover attractions via Overpass API (free)
+- Discover attractions via Overpass API (free), with category selection:
+  - Pilgrim (famous temples and places of worship)
+  - Nature (trekking, waterfalls, rivers, parks, reserves)
+  - Historic (castles, archaeological sites, monuments)
 - Build/edit itinerary; click map to add custom waypoints
 - Route planning via OSRM public demo server for walking/cycling/driving
+- Choose starting point: current location (via Geolocation) or a custom starting place
+- Manual place search (Nominatim) to add places or set custom start
 - Modals for details and add-to-itinerary
 
 ## Run
@@ -31,6 +36,7 @@ Security note: This is for demo/dev usage only. Do not use this approach in prod
 - Map tiles: OpenStreetMap standard tiles
 - POIs/Attractions: Overpass API (https://overpass-api.de/)
 - Routing: OSRM public demo server (https://router.project-osrm.org)
+- Place search and reverse geocoding: Nominatim (https://nominatim.openstreetmap.org)
 
 Notes:
 - Public demo servers are rate-limited and for light usage/testing. For heavy usage, self-host Overpass/OSRM or use another free-tier service.
@@ -38,12 +44,13 @@ Notes:
 
 ## Usage
 
-- Use "Discover nearby" or Search to load attractions near the current map center.
+- Use "Discover nearby" selecting a category (Pilgrim, Nature, Historic) to load attractions around the map center.
 - Click on the map to add a custom point to your itinerary.
+- Switch starting point between Current and Custom. For Custom, set from map center or via search or from a discovered place.
+- Use the place search bar to find and add places; you can also set a searched place as the custom start.
 - Change the travel mode (Walking/Cycling/Driving) to recalculate the route.
 - Open details to see OSM tags and add to itinerary via modal.
 
 ## Styling
 
 The interface follows the Ocean Professional theme with blue and amber accents and a modern, minimalist style. Styles are defined in src/index.css.
-

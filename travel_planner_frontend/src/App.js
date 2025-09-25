@@ -4,7 +4,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./index.css";
 import { theme } from "./theme";
-import { fetchAttractionsAround, routeBetween } from "./api";
+import { fetchAttractionsAround, routeBetween, nominatimSearchPlaces, reverseGeocode } from "./api";
 
 // Fix default icon assets for Leaflet in CRA
 delete L.Icon.Default.prototype._getIconUrl;
@@ -124,6 +124,53 @@ function MapFollow({ center, zoom }) {
   return null;
 }
 
+// Helper: categories mapping for Pilgrim / Nature / Historic
+const CATEGORY_OPTIONS = [
+  {
+    key: "pilgrim",
+    label: "Pilgrim",
+    // Very famous temples and major religious sites
+    overpassFilters: [
+      "amenity=place_of_worship",
+      "tourism=attraction",
+      "historic=monument",
+      "historic=wayside_shrine",
+    ],
+  },
+  {
+    key: "nature",
+    label: "Nature",
+    // Trekking, waterfalls, rivers, dams, safari, parks
+    overpassFilters: [
+      "tourism=viewpoint",
+      "tourism=attraction",
+      "natural=waterfall",
+      "natural=peak",
+      "natural=wood",
+      "waterway=river",
+      "leisure=park",
+      "leisure=nature_reserve",
+      "landuse=forest",
+      "boundary=national_park",
+    ],
+  },
+  {
+    key: "historic",
+    label: "Historic",
+    // Very famous historic places
+    overpassFilters: [
+      "historic",
+      "tourism=attraction",
+      "heritage",
+      "historic=castle",
+      "historic=archaeological_site",
+      "historic=ruins",
+      "historic=monument",
+      "historic=memorial",
+    ],
+  },
+];
+
 // PUBLIC_INTERFACE
 export default function App() {
   /** Travel Planner main app with Ocean Professional theme, split layout, and map-based planning. */
@@ -140,15 +187,34 @@ export default function App() {
   const [mapReady, setMapReady] = useState(false);
   const [lastClick, setLastClick] = useState(null);
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [category, setCategory] = useLocalState("discoverCategory", "pilgrim"); // pilgrim, nature, historic
+  const [startMode, setStartMode] = useLocalState("startMode", "current"); // current | custom
+  const [customStart, setCustomStart] = useLocalState("customStart", null); // {lat, lon, name, id}
 
   // Derived
   const leafletCenter = useMemo(() => [center.lat, center.lon], [center]);
 
-  const recalcRoute = useCallback(async (pts, mode) => {
-    if (pts.length < 2) { setRoute(null); return; }
+  // Recalculate route when itinerary, profile, or start choice changes
+  const recalcRoute = useCallback(async () => {
+    // Build route points starting with chosen starting point
+    const points = [];
+    if (startMode === "current" && itinerary.length > 0 && itinerary[0].id === "your-location") {
+      points.push({ lat: itinerary[0].lat, lon: itinerary[0].lon });
+      // remaining itinerary after "your-location"
+      itinerary.slice(1).forEach((i) => points.push({ lat: i.lat, lon: i.lon }));
+    } else if (startMode === "custom" && customStart) {
+      points.push({ lat: customStart.lat, lon: customStart.lon });
+      itinerary.forEach((i) => points.push({ lat: i.lat, lon: i.lon }));
+    } else {
+      // default: just use itinerary
+      itinerary.forEach((i) => points.push({ lat: i.lat, lon: i.lon }));
+    }
+
+    if (points.length < 2) { setRoute(null); return; }
     setIsRouting(true);
     try {
-      const r = await routeBetween(pts, mode);
+      const r = await routeBetween(points, profile);
       setRoute(r);
     } catch (e) {
       console.error(e);
@@ -156,30 +222,33 @@ export default function App() {
     } finally {
       setIsRouting(false);
     }
-  }, []);
+  }, [itinerary, profile, startMode, customStart]);
 
-  // Recalculate route when itinerary or profile changes
   useEffect(() => {
-    const pts = itinerary.map((i) => ({ lat: i.lat, lon: i.lon }));
-    recalcRoute(pts, profile);
-  }, [itinerary, profile, recalcRoute]);
+    recalcRoute();
+  }, [recalcRoute]);
+
+  const categoryFilters = useMemo(() => {
+    const opt = CATEGORY_OPTIONS.find((o) => o.key === category) || CATEGORY_OPTIONS[0];
+    return opt.overpassFilters;
+  }, [category]);
 
   const handleFetchAttractions = useCallback(async () => {
     setIsFetching(true);
     try {
-      const res = await fetchAttractionsAround(center.lat, center.lon, radius);
+      const res = await fetchAttractionsAround(center.lat, center.lon, radius, categoryFilters);
       // Basic filtering to interesting tags
       const filtered = res.filter((i) => {
         const t = i.tags || {};
-        return !!(t.tourism || t.amenity || t.leisure || t.historic);
+        return !!(t.tourism || t.amenity || t.leisure || t.historic || t.natural || t.heritage);
       });
-      setAttractions(filtered.slice(0, 60));
+      setAttractions(filtered.slice(0, 80));
     } catch (e) {
       console.error(e);
     } finally {
       setIsFetching(false);
     }
-  }, [center, radius]);
+  }, [center, radius, categoryFilters]);
 
   // PUBLIC_INTERFACE
   async function geocodeCity(q) {
@@ -193,9 +262,7 @@ export default function App() {
         const lat = parseFloat(arr[0].lat);
         const lon = parseFloat(arr[0].lon);
         if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          // Update state; MapFollow will animate the map to this position.
           setCenter({ lat, lon });
-          // Use a reasonable default zoom when jumping to a new search result.
           setZoom(14);
         }
       }
@@ -206,33 +273,11 @@ export default function App() {
 
   // PUBLIC_INTERFACE
   async function locateMe() {
-    /** Use browser geolocation to center and zoom the map on user's current location and add a "Your Location" entry with reverse-geocoded address. */
+    /** Use browser geolocation to center and zoom the map on user's current location and add/update a "Your Location" entry with reverse-geocoded address. */
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser.");
       return;
     }
-
-    // Helper: reverse-geocode using OSM Nominatim
-    async function reverseGeocode(lat, lon) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(
-          lat
-        )}&lon=${encodeURIComponent(lon)}&zoom=16&addressdetails=1`;
-        const resp = await fetch(url, {
-          headers: {
-            "Accept": "application/json",
-          },
-        });
-        if (!resp.ok) throw new Error(`Reverse geocode error: ${resp.status}`);
-        const data = await resp.json();
-        return data.display_name || null;
-      } catch (e) {
-        console.warn("Reverse geocoding failed:", e);
-        return null;
-      }
-    }
-
-    // Wrap geolocation in a promise for reliable async/await control flow
     const getPosition = () =>
       new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(
@@ -253,17 +298,14 @@ export default function App() {
         return;
       }
 
-      // Animate map to location with a suitable zoom; MapFollow observes state changes
       setCenter({ lat, lon });
-      setZoom((z) => (typeof z === "number" ? Math.max(z, 15) : 15)); // ensure a close zoom
+      setZoom((z) => (typeof z === "number" ? Math.max(z, 15) : 15));
 
-      // Reverse-geocode and add/update "Your Location" at top of itinerary
       const displayName = await reverseGeocode(lat, lon);
       const name =
         displayName?.length ? `Your Location — ${displayName}` : `Your Location — (${lat.toFixed(5)}, ${lon.toFixed(5)})`;
 
       setItinerary((prev) => {
-        // If an entry already exists, move it to top and update its name/coords
         const existingIdx = prev.findIndex((p) => p.id === "your-location");
         const yourLocation = {
           id: "your-location",
@@ -274,17 +316,13 @@ export default function App() {
         };
         if (existingIdx >= 0) {
           const cloned = [...prev];
-          // Remove existing
           cloned.splice(existingIdx, 1);
-          // Add to top
           return [yourLocation, ...cloned];
         }
-        // Insert as the first item
         return [yourLocation, ...prev];
       });
     } catch (err) {
       console.error("Geolocation error:", err);
-      // User-friendly error messages based on error codes
       const msg =
         err?.code === 1
           ? "Location permission denied. Please allow access to use Locate Me."
@@ -301,12 +339,12 @@ export default function App() {
     if (!lastClick) return;
     setIsFetching(true);
     try {
-      const res = await fetchAttractionsAround(lastClick.lat, lastClick.lon, radius);
+      const res = await fetchAttractionsAround(lastClick.lat, lastClick.lon, radius, categoryFilters);
       const filtered = res.filter((i) => {
         const t = i.tags || {};
-        return !!(t.tourism || t.amenity || t.leisure || t.historic);
+        return !!(t.tourism || t.amenity || t.leisure || t.historic || t.natural || t.heritage);
       });
-      setAttractions(filtered.slice(0, 60));
+      setAttractions(filtered.slice(0, 80));
       setCenter({ lat: lastClick.lat, lon: lastClick.lon });
       setZoom((z) => Math.max(z, 14));
     } catch (e) {
@@ -314,7 +352,7 @@ export default function App() {
     } finally {
       setIsFetching(false);
     }
-  }, [lastClick, radius]);
+  }, [lastClick, radius, categoryFilters]);
 
   const addToItinerary = useCallback((item) => {
     setItinerary((prev) => {
@@ -339,6 +377,34 @@ export default function App() {
     };
     addToItinerary(point);
   }, [addToItinerary]);
+
+  // Handle manual search for places to add
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [searchingPlaces, setSearchingPlaces] = useState(false);
+  const doPlaceSearch = useCallback(async () => {
+    if (!placeQuery.trim()) { setSearchResults([]); return; }
+    setSearchingPlaces(true);
+    try {
+      const results = await nominatimSearchPlaces(placeQuery, center);
+      setSearchResults(results);
+    } catch (e) {
+      console.error(e);
+      setSearchResults([]);
+    } finally {
+      setSearchingPlaces(false);
+    }
+  }, [placeQuery, center]);
+
+  // Update custom start from center quickly
+  const setCustomStartFromCenter = useCallback(async () => {
+    const name = await reverseGeocode(center.lat, center.lon);
+    setCustomStart({
+      id: "custom-start",
+      name: name || `Custom Start (${center.lat.toFixed(4)}, ${center.lon.toFixed(4)})`,
+      lat: center.lat,
+      lon: center.lon,
+    });
+  }, [center]);
 
   return (
     <div className="app" style={{ background: theme.colors.background }}>
@@ -381,19 +447,143 @@ export default function App() {
       <main className="workspace">
         <div className="left-panel">
           <Section
-            title="Itinerary"
+            title="Plan your trip"
             right={
               <div className="row">
-                <button className="btn danger" onClick={clearItinerary} disabled={itinerary.length === 0}>Clear</button>
+                <div className="row" role="group" aria-label="Starting point selection">
+                  <button
+                    className={`btn ghost ${startMode === "current" ? "" : ""}`}
+                    onClick={() => setStartMode("current")}
+                    aria-pressed={startMode === "current"}
+                    title="Start from current location (Your Location)"
+                  >
+                    Start: Current
+                  </button>
+                  <button
+                    className="btn ghost"
+                    onClick={() => setStartMode("custom")}
+                    aria-pressed={startMode === "custom"}
+                    title="Start from a custom point"
+                  >
+                    Start: Custom
+                  </button>
+                </div>
               </div>
             }
           >
+            {startMode === "custom" && (
+              <div className="panel" style={{ marginBottom: 8 }}>
+                <div className="row">
+                  <span className="badge">Custom starting point</span>
+                  <button className="btn ghost" onClick={setCustomStartFromCenter}>Use map center</button>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  {customStart ? (
+                    <div className="item" style={{ gridTemplateColumns: "1fr auto" }}>
+                      <div>
+                        <p className="item-title">{customStart.name}</p>
+                        <p className="item-sub">{customStart.lat.toFixed(4)}, {customStart.lon.toFixed(4)}</p>
+                      </div>
+                      <div className="row">
+                        <button className="btn ghost" onClick={() => { setCenter({ lat: customStart.lat, lon: customStart.lon }); setZoom((z) => Math.max(z, 15)); }}>Center</button>
+                        <button className="btn danger" onClick={() => setCustomStart(null)}>Clear</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="item-sub" style={{ margin: 0 }}>
+                      No custom start set. Use "Use map center" or pick a place below and set as start.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="panel" style={{ marginBottom: 8 }}>
+              <div className="row" style={{ alignItems: "flex-end" }}>
+                <div>
+                  <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>Add places</div>
+                  <div className="row">
+                    <input
+                      className="input"
+                      placeholder="Search places (e.g., Taj Mahal, Yosemite)"
+                      value={placeQuery}
+                      onChange={(e) => setPlaceQuery(e.target.value)}
+                      style={{ width: 240 }}
+                      aria-label="Search places"
+                    />
+                    <button className="btn" onClick={doPlaceSearch} disabled={searchingPlaces}>
+                      {searchingPlaces ? "Searching…" : "Search"}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>Category</div>
+                  <select
+                    className="select"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    aria-label="Category"
+                    style={{ width: 160 }}
+                  >
+                    <option value="pilgrim">Pilgrim (temples)</option>
+                    <option value="nature">Nature</option>
+                    <option value="historic">Historic</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>Radius (m)</div>
+                  <input
+                    className="input"
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={radius}
+                    onChange={(e) => setRadius(Number(e.target.value) || 1200)}
+                    style={{ width: 120 }}
+                    aria-label="Search radius (m)"
+                  />
+                </div>
+                <button className="btn secondary" onClick={handleFetchAttractions} disabled={isFetching}>
+                  {isFetching ? "Loading…" : "Discover nearby"}
+                </button>
+              </div>
+
+              {searchResults.length > 0 && (
+                <div className="panel" style={{ marginTop: 8 }}>
+                  <h4 className="panel-title">Search results</h4>
+                  <div className="list">
+                    {searchResults.map((r) => (
+                      <div key={r.id} className="item">
+                        <div>
+                          <p className="item-title">{r.name}</p>
+                          <p className="item-sub">{r.lat.toFixed(4)}, {r.lon.toFixed(4)}</p>
+                          <div className="row" style={{ marginTop: 8 }}>
+                            <button className="btn ghost" onClick={() => { setCenter({ lat: r.lat, lon: r.lon }); setZoom((z) => Math.max(z, 14)); }}>Center</button>
+                            <button className="btn" onClick={() => addToItinerary(r)}>Add</button>
+                            {startMode === "custom" && (
+                              <button
+                                className="btn secondary"
+                                onClick={() => setCustomStart({ ...r, id: "custom-start" })}
+                                title="Set as custom start"
+                              >
+                                Set as start
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="list" aria-live="polite">
               {itinerary.length === 0 && (
                 <div className="item">
                   <div>
                     <p className="item-title">No items yet</p>
-                    <p className="item-sub">Tap on the map to add a custom point, or use Discover to find attractions.</p>
+                    <p className="item-sub">Tap on the map to add a custom point, search places, or use Discover.</p>
                   </div>
                 </div>
               )}
@@ -434,19 +624,9 @@ export default function App() {
           </Section>
 
           <Section
-            title="Discover attractions"
+            title={`Discover attractions — ${CATEGORY_OPTIONS.find(c => c.key === category)?.label || ""}`}
             right={
               <div className="row">
-                <input
-                  className="input"
-                  type="number"
-                  min={100}
-                  step={100}
-                  value={radius}
-                  onChange={(e) => setRadius(Number(e.target.value) || 1200)}
-                  style={{ width: 120 }}
-                  aria-label="Search radius (m)"
-                />
                 <button className="btn" onClick={handleFetchAttractions} disabled={isFetching}>
                   {isFetching ? "Loading…" : "Search"}
                 </button>
@@ -458,7 +638,7 @@ export default function App() {
                 <div className="item">
                   <div>
                     <p className="item-title">No results yet</p>
-                    <p className="item-sub">Press Search to load attractions around map center.</p>
+                    <p className="item-sub">Press Discover nearby to load attractions around map center.</p>
                   </div>
                 </div>
               )}
@@ -467,17 +647,24 @@ export default function App() {
                   <div>
                     <p className="item-title">{a.name}</p>
                     <p className="item-sub">
-                      {(a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || "place")}
+                      {(a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
                       {" · "}
                       {a.lat.toFixed(4)}, {a.lon.toFixed(4)}
                     </p>
                     <div className="row" style={{ marginTop: 8 }}>
                       <button className="btn ghost" onClick={() => { setCenter({ lat: a.lat, lon: a.lon }); setZoom((z) => Math.max(z, 14)); }}>Center</button>
-                      <button className="btn secondary" onClick={() => setSelected(a)}>Details</button>
+                      <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
+                      {startMode === "custom" && (
+                        <button
+                          className="btn secondary"
+                          onClick={() => setCustomStart({ ...a, id: "custom-start" })}
+                          title="Set as custom start"
+                        >
+                          Set as start
+                        </button>
+                      )}
+                      <button className="btn ghost" onClick={() => setSelected(a)}>Details</button>
                     </div>
-                  </div>
-                  <div className="row">
-                    <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
                   </div>
                 </div>
               ))}
@@ -521,15 +708,28 @@ export default function App() {
                 {center.lat.toFixed(4)}, {center.lon.toFixed(4)}
               </Popup>
             </Marker>
+            {/* Custom start marker */}
+            {startMode === "custom" && customStart && (
+              <Marker position={[customStart.lat, customStart.lon]}>
+                <Popup>
+                  <strong>Custom Start</strong><br />
+                  {customStart.name}<br />
+                  {customStart.lat.toFixed(4)}, {customStart.lon.toFixed(4)}
+                </Popup>
+              </Marker>
+            )}
             {/* Attraction markers */}
             {attractions.map((a) => (
               <Marker key={a.id} position={[a.lat, a.lon]}>
                 <Popup>
                   <strong>{a.name}</strong><br />
-                  {(a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || "place")}
-                  <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                  {(a.tags.tourism || a.tags.amenity || a.tags.leisure || a.tags.historic || a.tags.natural || "place")}
+                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <button className="btn" onClick={() => addToItinerary(a)}>Add</button>
-                    <button className="btn secondary" onClick={() => setSelected(a)}>Details</button>
+                    {startMode === "custom" && (
+                      <button className="btn secondary" onClick={() => setCustomStart({ ...a, id: "custom-start" })}>Set as start</button>
+                    )}
+                    <button className="btn ghost" onClick={() => setSelected(a)}>Details</button>
                   </div>
                 </Popup>
               </Marker>
@@ -571,7 +771,7 @@ export default function App() {
         {selected && (
           <div>
             <div className="row" style={{ marginBottom: 8 }}>
-              <span className="badge">{selected.tags?.tourism || selected.tags?.amenity || selected.tags?.leisure || selected.tags?.historic || "place"}</span>
+              <span className="badge">{selected.tags?.tourism || selected.tags?.amenity || selected.tags?.leisure || selected.tags?.historic || selected.tags?.natural || "place"}</span>
               <span className="badge">{selected.type || "node"}</span>
             </div>
             <p style={{ marginTop: 0, color: "#374151" }}>
